@@ -21,30 +21,35 @@ model = FlowModel(2,
 
 compiled_model = compile(model, randn(StableRNG(321), nr_params(model)))
 
-function generate_data(nr_samples::Int64, model::CompiledFlowModel)
+function generate_data(nr_samples::Int64, prior_samples, model::CompiledFlowModel)
 
     # If I want α ~ Uniform(0, 3) and τ ~ Uniform(0, .50), do I move the following 
     # lines into the for loop and sample? Do I need to sample many times from α and τ?
     
-    # specify latent sampling distribution
-    dist = LCA(; α = 1.5, β=0.20, λ=0.10, ν=[2.5,2.0], Δt=.001, τ=.30, σ=1.0)
-
-
-    # sample from the distribution
-    choice,rt = rand(dist, nr_samples)
 
     # transform data
-    y = zeros(Float64, 2, nr_samples)
-    for k = 1:nr_samples
-        y[:,k] .= ReactiveMP.forward(model, [choice[k], rt[k]])
+    y = zeros(Float64, 2, nr_samples * prior_samples)
+    col = 0
+    for p ∈ 1:prior_samples
+        α = Uniform(0, 3)
+        τ = Uniform(0, 0.50)
+        # specify latent sampling distribution
+        dist = LCA(; α, β=0.20, λ=0.10, ν=[2.5,2.0], Δt=.001, τ, σ=1.0)
+
+        # sample from the distribution
+        choice,rt = rand(dist, nr_samples)
+        for k ∈ 1:nr_samples
+            col += 1
+            y[:,col] .= ReactiveMP.forward(model, [choice[k], rt[k]])
+        end
     end
 
     # return data
     return y, [choice rt]'
+end
 
-end;
 # generate data
-y, x = generate_data(1000, compiled_model)
+y, x = generate_data(1000, 1000, compiled_model)
 
 # plot generated data
 p1 = scatter(x[1,:], x[2,:], alpha=0.3, title="Original data", size=(800,400))
@@ -52,14 +57,14 @@ p2 = scatter(y[1,:], y[2,:], alpha=0.3, title="Transformed data", size=(800,400)
 plot(p1, p2, legend = false)
 
 
-@model function invertible_neural_network(nr_samples::Int64)
+@model function invertible_neural_network(nr_samples::Int64, prior_samples)
     
     # initialize variables
     z_μ   = randomvar()
     z_Λ   = randomvar()
     x     = randomvar(nr_samples)
     y_lat = randomvar(nr_samples)
-    y     = datavar(Vector{Float64}, nr_samples)
+    y     = datavar(Vector{Float64}, nr_samples, prior_samples)
 
     # specify prior
     z_μ ~ MvNormalMeanCovariance(zeros(2), huge*diagm(ones(2)))
@@ -89,7 +94,7 @@ plot(p1, p2, legend = false)
 
 end;
 
-
+# this will need to be updated depending on the data structure above
 observations = [y[:,k] for k=1:size(y,2)]
 
 fmodel         = invertible_neural_network(length(observations))
