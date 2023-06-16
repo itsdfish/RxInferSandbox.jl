@@ -29,23 +29,24 @@ function generate_data(nr_samples::Int64, prior_samples, model::CompiledFlowMode
 
     # transform data
     y = zeros(Float64, 2, nr_samples * prior_samples)
+    choices = fill(0, nr_samples * prior_samples)
+    rts = fill(0.0, nr_samples * prior_samples)
     col = 0
     for p ∈ 1:prior_samples
-        α = Uniform(0, 3)
-        τ = Uniform(0, 0.50)
+        α = rand(Uniform(0, 3))
+        τ = rand(Uniform(0, 0.50))
         # specify latent sampling distribution
         dist = LCA(; α, β=0.20, λ=0.10, ν=[2.5,2.0], Δt=.001, τ, σ=1.0)
-
-        # sample from the distribution
-        choice,rt = rand(dist, nr_samples)
         for k ∈ 1:nr_samples
             col += 1
-            y[:,col] .= ReactiveMP.forward(model, [choice[k], rt[k]])
+            # sample from the distribution
+            choices[col],rts[col] = rand(dist)
+            y[:,col] .= ReactiveMP.forward(model, [choices[col],rts[col]])
         end
     end
 
     # return data
-    return y, [choice rt]'
+    return y, [choices rts]'
 end
 
 # generate data
