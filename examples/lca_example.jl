@@ -2,6 +2,7 @@ cd(@__DIR__)
 using Pkg 
 Pkg.activate("..")
 using RxInfer
+using ReactiveMP        # using branch transfominator
 using Random
 using StableRNGs
 
@@ -22,6 +23,8 @@ compiled_model = compile(model, randn(StableRNG(321), nr_params(model)))
 
 function generate_data(nr_samples::Int64, model::CompiledFlowModel)
 
+    # If I want α ~ Uniform(0, 3) and τ ~ Uniform(0, .50), do I move the following 
+    # lines into the for loop and sample? Do I need to sample many times from α and τ?
     
     # specify latent sampling distribution
     dist = LCA(; α = 1.5, β=0.20, λ=0.10, ν=[2.5,2.0], Δt=.001, τ=.30, σ=1.0)
@@ -62,11 +65,16 @@ plot(p1, p2, legend = false)
     z_μ ~ MvNormalMeanCovariance(zeros(2), huge*diagm(ones(2)))
     z_Λ ~ Wishart(2.0, tiny*diagm(ones(2)))
 
+    # how do I define μh and Σh? 
+    h ~ MvNormalMeanCovariance(μh, Σh)
+
     # specify observations
     for k = 1:nr_samples
 
         # specify latent state
-        x[k] ~ MvNormalMeanPrecision(z_μ, z_Λ)
+        #x[k] ~ MvNormalMeanPrecision(z_μ, z_Λ)
+
+        x[k] ~ ContinuousTransition(h, z_μ, z_Λ) where {meta = CTMeta(in_dim, out_dim)}
 
         # specify transformed latent value
         y_lat[k] ~ Flow(x[k])
