@@ -12,8 +12,9 @@ using Distributions     # only used for sampling from multivariate distributions
 using Optim             # only used for parameter optimisation 
 using SequentialSamplingModels
 
-model = FlowModel(2,
+model = FlowModel(
     (
+        InputLayer(2),
         AdditiveCouplingLayer(PlanarFlow()),
         AdditiveCouplingLayer(PlanarFlow(); permute=false)
     )
@@ -22,15 +23,8 @@ model = FlowModel(2,
 compiled_model = compile(model, randn(StableRNG(321), nr_params(model)))
 
 function generate_data(nr_samples::Int64, prior_samples, model::CompiledFlowModel)
-
-    # If I want α ~ Uniform(0, 3) and τ ~ Uniform(0, .50), do I move the following 
-    # lines into the for loop and sample? Do I need to sample many times from α and τ?
-    
-
-    # transform data
+    # training data. rows choices, reaction times
     y = zeros(Float64, 2, nr_samples * prior_samples)
-    choices = fill(0, nr_samples * prior_samples)
-    rts = fill(0.0, nr_samples * prior_samples)
     col = 0
     for p ∈ 1:prior_samples
         α = rand(Uniform(0, 3))
@@ -40,67 +34,59 @@ function generate_data(nr_samples::Int64, prior_samples, model::CompiledFlowMode
         for k ∈ 1:nr_samples
             col += 1
             # sample from the distribution
-            choices[col],rts[col] = rand(dist)
-            y[:,col] .= ReactiveMP.forward(model, [choices[col],rts[col]])
+            choice,rt = rand(dist)
+            y[:,col] = [choice, rt] 
         end
     end
-
-    # return data
-    return y, [choices rts]'
+    return y
 end
 
 # generate data
-y, x = generate_data(1000, 1000, compiled_model)
+y = generate_data(100, 100, compiled_model)
 
 # plot generated data
-p1 = scatter(x[1,:], x[2,:], alpha=0.3, title="Original data", size=(800,400))
-p2 = scatter(y[1,:], y[2,:], alpha=0.3, title="Transformed data", size=(800,400))
-plot(p1, p2, legend = false)
+p1 = scatter(y[1,:], y[2,:], alpha=0.3, title="Original data", size=(800,400))
 
+ατconcat(α, τ) = vcat(α, τ) # we need this function to combine α and τ parameters and push it through the Flow
 
-@model function invertible_neural_network(nr_samples::Int64, prior_samples)
+@model function invertible_neural_network(nr_samples::Int64, model)
     
     # initialize variables
-    z_μ   = randomvar()
-    z_Λ   = randomvar()
     x     = randomvar(nr_samples)
     y_lat = randomvar(nr_samples)
-    y     = datavar(Vector{Float64}, nr_samples, prior_samples)
+    y     = datavar(Vector{Float64}, nr_samples)
 
     # specify prior
-    z_μ ~ MvNormalMeanCovariance(zeros(2), huge*diagm(ones(2)))
-    z_Λ ~ Wishart(2.0, tiny*diagm(ones(2)))
+    α  ~ Normal(μ=3, σ²=10.0)
+    τ  ~ Normal(μ=10, σ²=10.0)
 
-    # how do I define μh and Σh? 
-    h ~ MvNormalMeanCovariance(μh, Σh)
+    # α   ~ Beta(1, 1)
+    # τ   ~ Beta(1, 1)
+
+    # use the following for Beta priors 
+    #z_μ ~ ατconcat(α, τ) where {meta=CVI()}
+    z_μ ~ ατconcat(α, τ) where {meta=Linearization()}
+    z_Λ ~ Wishart(1e2, 1e4 * diageye(2))
 
     # specify observations
-    for k = 1:nr_samples
+    for i in 1:nr_samples
 
         # specify latent state
-        #x[k] ~ MvNormalMeanPrecision(z_μ, z_Λ)
-
-        x[k] ~ ContinuousTransition(h, z_μ, z_Λ) where {meta = CTMeta(in_dim, out_dim)}
+        x[i] ~ MvNormal(μ=z_μ, Λ=z_Λ)
 
         # specify transformed latent value
-        y_lat[k] ~ Flow(x[k])
+        y_lat[i] ~ Flow(x[i]) where {meta=FlowMeta(model)}
 
         # specify observations
-        y[k] ~ MvNormalMeanCovariance(y_lat[k], tiny*diagm(ones(2)))
+        y[i] ~ MvNormal(μ=y_lat[i], Σ=tiny * diageye(2))
 
     end
+end
 
-    # return variables
-    return z_μ, z_Λ, x, y_lat, y
 
-end;
-
-# this will need to be updated depending on the data structure above
-observations = [y[:,k] for k=1:size(y,2)]
-
-fmodel         = invertible_neural_network(length(observations))
-data          = (y = observations, )
-initmarginals = (z_μ = MvNormalMeanCovariance(zeros(2), huge*diagm(ones(2))), z_Λ = Wishart(2.0, tiny*diagm(ones(2))))
+fmodel         = invertible_neural_network(length(y), compiled_model)
+data          = (y = y, )
+initmarginals = (z_μ = MvNormalMeanCovariance(zeros(2), huge*diageye(2)), z_Λ = Wishart(2.0, diageye(2)))
 returnvars    = (z_μ = KeepLast(), z_Λ = KeepLast(), x = KeepLast(), y_lat = KeepLast())
 
 constraints = @constraints begin
