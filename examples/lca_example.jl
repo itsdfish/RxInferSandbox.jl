@@ -11,6 +11,7 @@ using Plots             # only used for visualisation
 using Distributions     # only used for sampling from multivariate distributions
 using Optim             # only used for parameter optimisation 
 using SequentialSamplingModels
+using Optimisers
 
 model = FlowModel(
     (
@@ -57,16 +58,13 @@ p1 = scatter(y[1,:], y[2,:], alpha=0.3, title="Original data", size=(800,400))
     y     = datavar(Vector{Float64}, nr_samples)
 
     # specify prior
-    α  ~ Normal(μ=3, σ²=10.0)
-    τ  ~ Normal(μ=10, σ²=10.0)
 
-    # α   ~ Beta(1, 1)
-    # τ   ~ Beta(1, 1)
+    α   ~ GammaShapeScale(100.0, 0.01)
+    τ   ~ GammaShapeScale(100.0, 0.01)
 
-    # use the following for Beta priors 
-    #z_μ ~ ατconcat(α, τ) where {meta=CVI()}
-    z_μ ~ ατconcat(α, τ) where {meta=Linearization()}
-    z_Λ ~ Wishart(1e2, 1e4 * diageye(2))
+
+    z_μ ~ ατconcat(α, τ) where {meta=CVI(StableRNG(42), 100, 200, Optimisers.Descent(0.1), RxInfer.ForwardDiffGrad(), 100, Val(true), true)}
+    z_Λ ~ Wishart(3, diageye(2))
 
     # specify observations
     for i in 1:nr_samples
@@ -78,10 +76,14 @@ p1 = scatter(y[1,:], y[2,:], alpha=0.3, title="Original data", size=(800,400))
         y_lat[i] ~ Flow(x[i]) where {meta=FlowMeta(model)}
 
         # specify observations
-        y[i] ~ MvNormal(μ=y_lat[i], Σ=tiny * diageye(2))
+        y[i] ~ MvNormal(μ=y_lat[i], Σ=tiny*diageye(2))
 
     end
-end
+
+    # return variables
+    return z_μ, z_Λ, x, y_lat, y
+
+end;
 
 
 fmodel         = invertible_neural_network(length(y), compiled_model)
