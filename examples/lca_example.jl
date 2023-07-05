@@ -111,7 +111,9 @@ result = inference(
     returnvars    = returnvars,
     free_energy   = true,
     iterations    = 10, 
-    showprogress  = false
+    showprogress  = false,
+    options = (;limit_stack_depth=2)
+
 )
 
 fe_flow = result.free_energy
